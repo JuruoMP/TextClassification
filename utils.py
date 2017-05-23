@@ -4,6 +4,8 @@ import os
 import pickle
 import jieba
 
+SHOW_INTER = 50
+
 class DocumentUtil(object):
 
     def __init__(self, stop_words_path='stop_words.txt'):
@@ -32,6 +34,7 @@ class DocumentUtil(object):
         if type(raw_docs) == str:
             raw_docs = [raw_docs]
         ret = []
+        doc_id = 0
         for raw_doc in raw_docs:
             def is_meaning_word(word):
                 if word in self.stop_words:
@@ -43,29 +46,36 @@ class DocumentUtil(object):
             #exit(-1)
             doc = []
             for raw_line in raw_doc:
+                raw_line = raw_line.strip()
                 if all(ord(c) < 128 for c in raw_line):
                     continue
-                doc += [_ for _ in jieba.cut(raw_line) if is_meaning_word(_)]
+                doc += [x for x in jieba.cut(raw_line) if is_meaning_word(x)]
             ret.append(doc)
+            doc_id += 1
+            if doc_id % SHOW_INTER == 0:
+                print('doc_id = %d' % doc_id)
         return ret
 
     def load_word_dict(self):
         if os.path.exists('word_dict.pkl'):
-            self.word2id = pickle.load('word_dict.pkl')
+            self.word2id = pickle.load(open('word_dict.pkl', 'rb'))
             self.id2word = {}
             for word, word_id in self.word2id.items():
                 self.id2word[word_id] = word
         else:
             self.word2id = {}
+            self.id2word = {}
 
     def update_word_dict(self, new_words):
-        assert new_words in (list, set)
+        assert type(new_words) in (list, set)
         if type(new_words) == list:
             new_words = set(new_words)
         for word in new_words:
             if word not in self.word2id.keys():
-                self.word2id[word] = len(self.word2id)
-        pickle.dump(self.word2id, 'word_dict.pkl')
+                word_id = len(self.word2id)
+                self.word2id[word] = word_id
+                self.id2word[word_id] = word
+        pickle.dump(self.word2id, open('word_dict.pkl', 'wb'))
 
     def load_document(self, documents, labels):
         '''
@@ -91,14 +101,14 @@ class DocumentUtil(object):
             if label not in self.labels.keys():
                 self.labels[label] = len(self.labels) + 1
             doc_id += 1
-            if doc_id % 10000 == 0:
+            if doc_id % SHOW_INTER == 0:
                 print('doc_id = %d' % doc_id)
         self.update_word_dict_with_documents()
 
     def update_word_dict_with_documents(self):
         print('Updating word dict...')
         word_set = set()
-        for (document, label) in self.documents:
+        for doc_id, (document, label) in self.documents.items():
             for word in document:
                 word_set.add(word)
         self.update_word_dict(word_set)
@@ -113,7 +123,8 @@ class DocumentUtil(object):
         doc_idf = {}
         for doc_id, (doc_words, _) in self.documents.items():
             for word in set(doc_words):
-                doc_idf[word] = doc_idf.get(word, 0) + 1
+                word_id = self.word2id.get(word)
+                doc_idf[word_id] = doc_idf.get(word_id, 0) + 1
         for word, word_cnt in doc_idf.items():
             doc_idf[word] = 1.0 / word_cnt
         print('Calculating tf...')
@@ -127,8 +138,14 @@ class DocumentUtil(object):
             # calc tfidf of each words
             tfidf = {}
             for word, tf in doc_tf.items():
-                assert doc_tf.get(word)
-                assert doc_idf.get(word)
+                try:
+                    assert doc_tf.get(word)
+                except:
+                    raise Exception('word "%s" not in doc_tf' % word)
+                try:
+                    assert doc_idf.get(word)
+                except:
+                    raise Exception('word "%s" not in doc_idf' % word)
                 tfidf[word] = doc_tf.get(word) * doc_idf.get(word)
             self.tfidf[doc_id] = tfidf
         print('Save tfidf to pickl file...')
@@ -142,12 +159,13 @@ class DocumentUtil(object):
     def export(self):
         # word dict is up to date
         with open('tfidf.txt', 'w', encoding='utf-8') as fw:
-            for doc_id, tfidf in self.tfidf.items():
+            for doc_id, doc_tfidf in self.tfidf.items():
                 document, label = self.documents.get(doc_id)
                 line = ''
                 label_str = ('0,' * len(self.labels))[:-1]
-                label_str[2 * label] = '1'
-                for word_tfidf in tfidf:
-                    line += word_tfidf + ','
+                label_str = label_str[:2 * self.labels.get(label)] + '1' + label_str[2 * self.labels.get(label) + 1:]
+                for word_id in range(len(self.word2id)):
+                    word_tfidf = doc_tfidf.get(word_id, 0.0)
+                    line += str(word_tfidf) + ','
                 line = line[:-1] + '\t' + label_str
                 print(line, file=fw)
