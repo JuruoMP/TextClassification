@@ -12,6 +12,7 @@ class DocumentUtil(object):
         self.word2id = None
         self.id2word = None
         self.documents = None
+        self.doc_idf = None
         self.tfidf = None
         self.labels = {}
         self.stop_words = set()
@@ -29,6 +30,7 @@ class DocumentUtil(object):
                     continue
             self.stop_words |= set([',', '.', '?', '/', '!', ])
         self.load_word_dict()
+        self.load_idf()
 
     def raw_to_document(self, raw_docs):
         if type(raw_docs) == str:
@@ -65,6 +67,12 @@ class DocumentUtil(object):
         else:
             self.word2id = {}
             self.id2word = {}
+
+    def load_idf(self):
+        if os.path.exists('idf.pkl'):
+            self.doc_idf = pickle.load(open('idf.pkl', 'rb'))
+        else:
+            self.doc_idf = {}
 
     def update_word_dict(self, new_words):
         assert type(new_words) in (list, set)
@@ -113,20 +121,27 @@ class DocumentUtil(object):
                 word_set.add(word)
         self.update_word_dict(word_set)
 
-    def _calc_tfidf(self):
+    def _calc_tfidf(self, documents=None):
         assert self.word2id
         assert self.id2word
-        assert self.documents
         self.tfidf = {}
+        if not documents:
+            train_mode = True
+            assert self.documents
+            documents = self.documents
+        else:
+            train_mode = False
         # calc inversed document frequency
         print('Calculating idf...')
-        doc_idf = {}
-        for doc_id, (doc_words, _) in self.documents.items():
-            for word in set(doc_words):
-                word_id = self.word2id.get(word)
-                doc_idf[word_id] = doc_idf.get(word_id, 0) + 1
-        for word, word_cnt in doc_idf.items():
-            doc_idf[word] = 1.0 / word_cnt
+        if train_mode is True:
+            self.doc_idf = {}
+            for doc_id, (doc_words, _) in documents.items():
+                for word in set(doc_words):
+                    word_id = self.word2id.get(word)
+                    self.doc_idf[word_id] = self.doc_idf.get(word_id, 0) + 1
+            for word, word_cnt in self.doc_idf.items():
+                self.doc_idf[word] = 1.0 / word_cnt
+            pickle.dump(self.doc_idf, open('idf.pkl', 'wb'))
         print('Calculating tf...')
         # calc term frequency
         for doc_id, (doc_words, _) in self.documents.items():
@@ -138,22 +153,32 @@ class DocumentUtil(object):
             # calc tfidf of each words
             tfidf = {}
             for word, tf in doc_tf.items():
+                '''
                 try:
                     assert doc_tf.get(word)
                 except:
                     raise Exception('word "%s" not in doc_tf' % word)
                 try:
-                    assert doc_idf.get(word)
+                    assert self.doc_idf.get(word)
                 except:
                     raise Exception('word "%s" not in doc_idf' % word)
-                tfidf[word] = doc_tf.get(word) * doc_idf.get(word)
+                '''
+                if word not in self.doc_idf.keys():
+                    continue
+                tfidf[word] = doc_tf.get(word) * self.doc_idf.get(word)
             self.tfidf[doc_id] = tfidf
         print('Save tfidf to pickl file...')
-        with open('tfidf.pkl', 'wb') as f_pkl:
-            pickle.dump(self.tfidf, f_pkl)
-
-    def get_tfidf(self):
+        if train_mode is True:
+            pickle.dump(self.tfidf, open('train_tfidf.pkl', 'wb'))
+        else:
+            pickle.dump(self.tfidf, open('tfidf.pkl', 'wb'))
+    
+    def train_tfidf(self):
         self._calc_tfidf()
+
+    def get_tfidf(self, documents=None):
+        assert documents
+        self._calc_tfidf(documents)
         return self.tfidf
 
     def export(self):
