@@ -8,7 +8,7 @@ SHOW_INTER = 50
 
 class DocumentUtil(object):
 
-    def __init__(self, stop_words_path='stop_words.txt'):
+    def __init__(self, stop_words_path='stop_words.txt', document_pkl_path='documents.pkl'):
         self.word2id = None
         self.id2word = None
         self.documents = None
@@ -16,6 +16,7 @@ class DocumentUtil(object):
         self.tfidf = None
         self.labels = {}
         self.stop_words = set()
+        self.document_pkl_path = document_pkl_path
         with open(stop_words_path, 'r', encoding='utf-8') as fr:
             while True:
                 try:
@@ -112,6 +113,12 @@ class DocumentUtil(object):
             if doc_id % SHOW_INTER == 0:
                 print('doc_id = %d' % doc_id)
         self.update_word_dict_with_documents()
+        pickle.dump((self.documents, self.labels), open(self.document_pkl_path, 'wb'))
+
+    def load_document_from_pkl(self):
+        assert self.document_pkl_path
+        self.documents, self.labels = pickle.load(open(self.document_pkl_path, 'rb'))
+        self.update_word_dict_with_documents()
 
     def update_word_dict_with_documents(self):
         print('Updating word dict...')
@@ -176,13 +183,14 @@ class DocumentUtil(object):
     def train_tfidf(self):
         self._calc_tfidf()
 
-    def get_tfidf(self, documents=None):
+    def get_tfidf(self, documents):
         assert documents
         self._calc_tfidf(documents)
         return self.tfidf
 
     def export(self):
         # word dict is up to date
+        print('labels = %s' % str(self.labels))
         with open('tfidf.txt', 'w', encoding='utf-8') as fw:
             for doc_id, doc_tfidf in self.tfidf.items():
                 document, label = self.documents.get(doc_id)
