@@ -13,7 +13,6 @@ class DocumentUtil(object):
         self.id2word = None
         self.documents = None
         self.doc_idf = None
-        self.tfidf = None
         self.labels = {}
         self.stop_words = set()
         self.document_pkl_path = document_pkl_path
@@ -128,21 +127,15 @@ class DocumentUtil(object):
                 word_set.add(word)
         self.update_word_dict(word_set)
 
-    def _calc_tfidf(self, documents=None):
+    def _calc_tfidf(self, documents, train_mode):
         assert self.word2id
         assert self.id2word
-        self.tfidf = {}
-        if not documents:
-            train_mode = True
-            assert self.documents
-            documents = self.documents
-        else:
-            train_mode = False
+        assert self.documents
         # calc inversed document frequency
         print('Calculating idf...')
         if train_mode is True:
             self.doc_idf = {}
-            for doc_id, (doc_words, _) in documents.items():
+            for doc_words in documents:
                 for word in set(doc_words):
                     word_id = self.word2id.get(word)
                     self.doc_idf[word_id] = self.doc_idf.get(word_id, 0) + 1
@@ -151,54 +144,61 @@ class DocumentUtil(object):
             pickle.dump(self.doc_idf, open('idf.pkl', 'wb'))
         print('Calculating tf...')
         # calc term frequency
-        for doc_id, (doc_words, _) in self.documents.items():
+        tfidfs = []
+        for doc_words in documents:
             total_words = len(doc_words)
             doc_tf = {}
             for word in doc_words:
+                if word not in self.word2id.keys():
+                    continue
                 word_id = self.word2id[word]
                 doc_tf[word_id] = doc_tf.get(word_id, 0) + 1.0 / total_words
             # calc tfidf of each words
             tfidf = {}
             for word, tf in doc_tf.items():
-                '''
-                try:
-                    assert doc_tf.get(word)
-                except:
-                    raise Exception('word "%s" not in doc_tf' % word)
-                try:
-                    assert self.doc_idf.get(word)
-                except:
-                    raise Exception('word "%s" not in doc_idf' % word)
-                '''
+                # TODO: check here
                 if word not in self.doc_idf.keys():
                     continue
                 tfidf[word] = doc_tf.get(word) * self.doc_idf.get(word)
-            self.tfidf[doc_id] = tfidf
-        print('Save tfidf to pickl file...')
+            tfidfs.append(tfidf)
+        print('Save tfidf to pickle file...')
         if train_mode is True:
-            pickle.dump(self.tfidf, open('train_tfidf.pkl', 'wb'))
+            pickle.dump(tfidfs, open('train_tfidf.pkl', 'wb'))
         else:
-            pickle.dump(self.tfidf, open('tfidf.pkl', 'wb'))
+            pickle.dump(tfidfs, open('tfidf.pkl', 'wb'))
+        return tfidfs
     
     def train_tfidf(self):
-        self._calc_tfidf()
+        documents = []
+        labels = []
+        for document, label in self.documents.values():
+            documents.append(document)
+            labels.append(label)
+        tfidfs = self._calc_tfidf(documents, train_mode=True)
+        assert len(documents) == len(labels)
+        tfidfs = [_ for _ in zip(tfidfs, labels)]
+        print('Exporting base tfidf...')
+        self.export(tfidfs)
 
-    def get_tfidf(self, documents):
+    def get_tfidf(self, documents, labels=None):
         assert documents
-        self._calc_tfidf(documents)
-        return self.tfidf
+        tfidfs = self._calc_tfidf(documents, train_mode=False)
+        if labels:
+            assert len(documents) == len(labels)
+            tfidfs = [_ for _ in zip(tfidfs, labels)]
+        return tfidfs
 
-    def export(self):
+    def export(self, tfidfs):
         # word dict is up to date
         print('labels = %s' % str(self.labels))
         with open('tfidf.txt', 'w', encoding='utf-8') as fw:
-            for doc_id, doc_tfidf in self.tfidf.items():
-                document, label = self.documents.get(doc_id)
-                line = ''
+            for tfidf, label in tfidfs:
+                tfidf_str = ''
+                for word_id in range(len(self.word2id)):
+                    word_tfidf = tfidf.get(word_id, 0)
+                    tfidf_str += '%f,' % word_tfidf
+                tfidf_str = tfidf_str[:-1]
                 label_str = ('0,' * len(self.labels))[:-1]
                 label_str = label_str[:2 * self.labels.get(label)] + '1' + label_str[2 * self.labels.get(label) + 1:]
-                for word_id in range(len(self.word2id)):
-                    word_tfidf = doc_tfidf.get(word_id, 0.0)
-                    line += str(word_tfidf) + ','
-                line = line[:-1] + '\t' + label_str
+                line = tfidf_str + '\t' + label_str
                 print(line, file=fw)
